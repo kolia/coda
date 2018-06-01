@@ -27,9 +27,11 @@ with open(os.path.expanduser("~/github_token"), 'r') as tokenfile:
 
 
 def github_repos(query):
-    def gql(start):
+    SEARCH_RESULTS_LIMIT = 1000
+    search_results = 0
+    def gql(query_additions, start):
         return ujson.loads(client.execute('''{
-          search(query: "''' + query + '", type: REPOSITORY, first: 100' + start + ''') {
+          search(query: "''' + query + ' ' + query_additions + '", type: REPOSITORY, first: 100' + start + ''') {
             pageInfo {
               hasNextPage
               endCursor
@@ -42,31 +44,68 @@ def github_repos(query):
                   defaultBranchRef {
                     name
                   }
+                  stargazers {
+                    totalCount
+                  }
                 }
               }
             }
           }
         }'''))
     def results(result):
-        return [edge["node"] for edge in result["data"]["search"]["edges"]]
-    first = gql("")
+        #print(result)
+        try:
+            return [edge["node"] for edge in result["data"]["search"]["edges"]]
+        except Exception as e:
+            print(result)
+            raise e
+    first = gql(" sort:stars", "")
     result_count = first["data"]["search"]["repositoryCount"]
     print(result_count, "results")
-    def subsequent(previous):
-        cursor = previous["data"]["search"]["pageInfo"]["endCursor"]
-        return gql(', after: "' + cursor + '"')
+    def subsequent(previous, upper_limit, counter):
+        if counter >= SEARCH_RESULTS_LIMIT:
+            stars = results(previous)[-1]["stargazers"]["totalCount"]
+            if stars == upper_limit:
+                return None, upper_limit, counter
+            upper_limit = stars
+            counter = 0
+            after = ""
+        else:
+            cursor = previous["data"]["search"]["pageInfo"]["endCursor"]
+            after = ', after: "' + cursor + '"'
+        query_additions = ' sort:stars stars:<' + str(upper_limit) 
+        print("query_addditions == ", query_additions)
+        return gql(query_additions, after), upper_limit, counter
     counter = 0
     def url(node):
         return "https://github.com/" + node["nameWithOwner"] + "/tarball/" + node["defaultBranchRef"]["name"]
     for node in results(first):
-        yield url(node)
-        counter += 1
-    r = first
-    while r["data"]["search"]["pageInfo"]["hasNextPage"]:
-        r = subsequent(r)
-        for node in results(r):
+        try:
             yield url(node)
             counter += 1
+        except:
+            pass
+    r = first
+    upper_limit = 4200000
+    while True:
+        try:
+            r, upper_limit, counter = subsequent(r, upper_limit, counter)
+        except Exception as e:
+            print(r)
+            print(upper_limit)
+            print(counter)
+            print(e)
+            return
+        #print("AAA", upper_limit, counter)
+        if r is None:
+            return
+        for node in results(r):
+            try:
+                yield url(node)
+                counter += 1
+            except:
+                pass
+        #print("BBB", upper_limit, counter)
 
 
 # In[5]:
@@ -126,6 +165,7 @@ def parse(url, extension, gzip):
             tar.extractall(path=temp_dir, members=extension_files(tar, extension))
         for file in glob.iglob(temp_dir + "/**/*" + extension, recursive=True):
             try:
+                #print("parsing " + file)
                 data = str(bblclient.parse(file).uast).encode('utf-8')
                 out  = BytesIO(data)
                 filename = file[len(temp_dir)+1:] + ".uast"
@@ -146,10 +186,12 @@ def parse(url, extension, gzip):
 cache_file = os.path.expanduser("~/coda/fetched/cache")
 
 def fetch(words, filters=" language:Python stars:>4", extension=".py"):
+    print("fetching " + words)
     now = datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
-    targz = os.path.expanduser("~/coda/fetched/" + words.replace(" ", "_") + extension + "__" + now + ".tar.gz")
+    targz = os.path.expanduser("~/coda/fetched/search_" + words.replace(" ", "_") + extension + "__" + now.replace(':','-') + ".tar.gz")
     with open(cache_file, "r") as cache:
         cached = set(url.strip() for url in cache.readlines())
+        print("cache with " + str(len(cached)) + " urls")
     with open(cache_file, "a") as cache, tarfile.open(targz, "x:gz") as gzip:
         for i, url in enumerate(github_repos(words + " " + filters)):
             if url not in cached:
@@ -163,12 +205,18 @@ def fetch(words, filters=" language:Python stars:>4", extension=".py"):
                     print(e)
 
 
-# In[ ]:
-
-
-for word in ["pytorch", "matplotlib", "tensorflow"]:
+for word in ["tensorflow"]: #"pytorch", "matplotlib", "tensorflow"]:
     fetch(word, filters=" language:Python stars:>4", extension=".py")
     
 for word in ["d3"]:
     fetch(word, filters=" language:Javascript stars:>4", extension=".js")
+
+for lang, extension in [("Python", ".py"), ("Javascript", ".js"), ("Java", ".java")]:
+    for word in ["algorithm", "test", "simple", "tutorial", "examples"]:
+        print()
+        fetch(word, filters=" language:" + lang + " stars:>4", extension=extension)
+
+for lang, extension in [("Javascript", ".js")]: #, ("Python", ".py")]: #, ("Java", ".java")]:
+    print()
+    fetch("", filters=" language:" + lang + " stars:>42", extension=extension)
 
