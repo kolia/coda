@@ -7,6 +7,8 @@
 from graphqlclient import GraphQLClient
 import os
 import ujson
+import sys
+import time
 
 
 # In[2]:
@@ -30,7 +32,9 @@ def github_repos(query):
     SEARCH_RESULTS_LIMIT = 1000
     search_results = 0
     def gql(query_additions, start):
-        return ujson.loads(client.execute('''{
+        print("querying...")
+        sys.stdout.flush()
+        response = ujson.loads(client.execute('''{
           search(query: "''' + query + ' ' + query_additions + '", type: REPOSITORY, first: 100' + start + ''') {
             pageInfo {
               hasNextPage
@@ -52,6 +56,8 @@ def github_repos(query):
             }
           }
         }'''))
+        #print(response); sys.stdout.flush()
+        return response
     def results(result):
         #print(result)
         try:
@@ -65,9 +71,10 @@ def github_repos(query):
     def subsequent(previous, upper_limit, counter):
         if counter >= SEARCH_RESULTS_LIMIT:
             stars = results(previous)[-1]["stargazers"]["totalCount"]
-            if stars == upper_limit:
+            if stars == upper_limit or stars == 0:
+                print("stars = upper_limit =", stars)
                 return None, upper_limit, counter
-            upper_limit = stars
+            upper_limit = stars + 1
             counter = 0
             after = ""
         else:
@@ -95,6 +102,10 @@ def github_repos(query):
             print(upper_limit)
             print(counter)
             print(e)
+            if "Please wait a few minutes before you try again" in r:
+                print("sleeping for 10 minutes...")
+                sys.stdout.flush()
+                time.sleep(600)
             return
         #print("AAA", upper_limit, counter)
         if r is None:
@@ -103,7 +114,8 @@ def github_repos(query):
             try:
                 yield url(node)
                 counter += 1
-            except:
+            except Exception as e:
+                print(e)
                 pass
         #print("BBB", upper_limit, counter)
 
@@ -125,21 +137,6 @@ def get(url, path):
     resp.release_conn()
 
 
-# In[6]:
-
-
-####  MAKE SURE bblfshd is up
-# sudo docker run --privileged --rm -it -p 9432:9432 -v bblfsh_cache:/var/lib/bblfshd --name bblfshd bblfsh/bblfshd
-#
-####  If you are doing this for the first time, also do:
-# sudo docker exec -it bblfshd bblfshctl driver install --all
-
-import bblfsh
-import tarfile
-
-bblclient = bblfsh.BblfshClient("0.0.0.0:9432")
-
-
 # In[27]:
 
 
@@ -152,11 +149,11 @@ def extension_files(members, extension):
         if os.path.splitext(tarinfo.name)[1] == extension:
             yield tarinfo
 
-from io import BytesIO
+import tarfile
 
 import time
 
-def parse(url, extension, gzip):
+def save(url, extension, gzip):
     count = 0
     with TemporaryDirectory() as temp_dir:
         tarpath = os.path.join(temp_dir, 'tar.tar')
@@ -165,17 +162,11 @@ def parse(url, extension, gzip):
             tar.extractall(path=temp_dir, members=extension_files(tar, extension))
         for file in glob.iglob(temp_dir + "/**/*" + extension, recursive=True):
             try:
-                #print("parsing " + file)
-                data = str(bblclient.parse(file).uast).encode('utf-8')
-                out  = BytesIO(data)
-                filename = file[len(temp_dir)+1:] + ".uast"
-                #print("                       " + filename)
-                info = tarfile.TarInfo(name=filename)
-                info.size = len(data)
-                gzip.addfile(tarinfo=info, fileobj=out)
+                filename = file[len(temp_dir)+1:]
+                gzip.add(file, arcname=filename)
                 count += 1
             except Exception as e:
-                print("Error while parsing " + file + " from " + url)
+                print("Error while adding " + file + " from " + url)
                 print(e)
     return count
 
@@ -183,40 +174,39 @@ def parse(url, extension, gzip):
 # In[28]:
 
 
-cache_file = os.path.expanduser("~/coda/fetched/cache")
+cache_file = os.path.expanduser("~/coda/fetched_julia/cache")
 
-def fetch(words, filters=" language:Python stars:>4", extension=".py"):
+print("starting...")
+sys.stdout.flush()
+
+def fetch(words, filters=" language:Julia", extension=".jl"):
     print("fetching " + words)
+    sys.stdout.flush()
     now = datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
-    targz = os.path.expanduser("~/coda/fetched/search_" + words.replace(" ", "_") + extension + "__" + now.replace(':','-') + ".tar.gz")
+    targz = os.path.expanduser("~/coda/fetched_julia/search_" + words.replace(" ", "_") + extension + "__" + now.replace(':','-') + ".tar.gz")
     with open(cache_file, "r") as cache:
         cached = set(url.strip() for url in cache.readlines())
         print("cache with " + str(len(cached)) + " urls")
+        sys.stdout.flush()
     with open(cache_file, "a") as cache, tarfile.open(targz, "x:gz") as gzip:
         for i, url in enumerate(github_repos(words + " " + filters)):
+            #print(i, url, "processing")
+            sys.stdout.flush()
             if url not in cached:
                 try:
-                    count = parse(url, extension, gzip)
+                    #print(i, url, "not in cache")
+                    sys.stdout.flush()
+                    count = save(url, extension, gzip)
                     cache.write(url + "\n")
                     cache.flush()
                     print(i, count, url)
+                    sys.stdout.flush()
                 except Exception as e:
                     print("Error while fetching " + url)
                     print(e)
 
 
-for word in ["tensorflow"]: #"pytorch", "matplotlib", "tensorflow"]:
-    fetch(word, filters=" language:Python stars:>4", extension=".py")
-    
-for word in ["d3"]:
-    fetch(word, filters=" language:Javascript stars:>4", extension=".js")
+#for word in ["algorithm", "test", "simple", "tutorial", "examples", "julia", ""]:
+#    fetch(word)
 
-for lang, extension in [("Python", ".py"), ("Javascript", ".js"), ("Java", ".java")]:
-    for word in ["algorithm", "test", "simple", "tutorial", "examples"]:
-        print()
-        fetch(word, filters=" language:" + lang + " stars:>4", extension=extension)
-
-for lang, extension in [("Javascript", ".js")]: #, ("Python", ".py")]: #, ("Java", ".java")]:
-    print()
-    fetch("", filters=" language:" + lang + " stars:>42", extension=extension)
-
+fetch("")
