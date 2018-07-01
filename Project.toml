@@ -1,4 +1,7 @@
-authors = ["kolia "]
 name = "Coda"
 uuid = "f22ea7ee-56e9-11e8-0086-87d023e98458"
+authors = ["kolia "]
 version = "0.1.0"
+
+[deps]
+Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
