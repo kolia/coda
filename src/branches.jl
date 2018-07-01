@@ -20,25 +20,18 @@ function branches(e::Expr)
     branches(e, down)
 end
 
-branches(s::String, rnn) = [Branch([],
-    rnn(wordvec(Flux.onehotbatch(Char(1) * transcode(UInt8, s) * Char(1), alphabet))))]
+embed(s::String) =
+    wordvec(Flux.onehotbatch(Char(1) * transcode(UInt8, s) * Char(1), alphabet))
 
-branches(s::Symbol, rnn) = branches(Char(0) * convert(String, s) * Char(0), rnn)
+embed(s) = embed(Char(0) * convert(String, s) * Char(0))
 
-function branches(e::Expr, rnn) :: Vector{Branch}
-    if e.head == :module
-        return Iterators.flatten(map(e.args) do arg
-            branches(arg, rnn)
-        end)
-    else
-        rnn(embed(e.head))
-        state = rnn.state
-        return Iterators.flatten(map(enumerate(e.args)) do i, arg
-            ui = convert(UInt8, min(255, i))
-            map(branches(arg, rnn)) do branch
-                Branch([ui; branch.path], branch.embedding)
-            end
-            rnn.state = state
-        end)
-    end
+branches(s, path, rnn) = [Branch(path, embed(s))]
+
+function branches(e::Expr, path, rnn) :: Vector{Branch}
+    rnn(embed(e.head))
+    state = rnn.state
+    return Iterators.flatten(map(enumerate(e.args)) do i, arg
+        branches(arg, [convert(UInt8, min(255, i)); path], rnn)
+        rnn.state = state
+    end)
 end
